@@ -2,7 +2,7 @@
 *.csv
 *.dta
 # Enunciado y archivos de R/Mac que no van al repo
-*.pdf
+Tarea3*.pdf
 .Rhistory
 .RData
 .Rproj.user/

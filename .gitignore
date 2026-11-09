@@ -1,0 +1,9 @@
+# Base de datos (pesa 115 MB, GitHub no acepta archivos > 100 MB)
+*.csv
+*.dta
+# Enunciado y archivos de R/Mac que no van al repo
+*.pdf
+.Rhistory
+.RData
+.Rproj.user/
+.DS_Store

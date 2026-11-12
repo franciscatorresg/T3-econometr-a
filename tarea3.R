@@ -1,6 +1,6 @@
 # =============================================================================
-# ICS2563 - Tarea 3 | Integrantes: [Nombre 1], [Nombre 2]
-#
+# ICS2563 - Tarea 3 | Integrantes: Paula Castro, Fransisca Torres
+
 # Para correr:
 #   1. Dejar base_tarea3.csv en la MISMA carpeta que este script.
 #   2. Correr todo con source("tarea3.R") o Ctrl/Cmd + Shift + Enter.
@@ -133,3 +133,153 @@ pendientes <- feols(c(puntaje_mat, puntaje_leng) ~ asistencia, data = datos,
                     split = ~zona_periodo, cluster = ~id_colegio)
 tabla_pend <- as.data.table(coeftable(pendientes))[coefficient == "asistencia"]
 print(tabla_pend[, .(sample, lhs, Estimate, `Std. Error`)], digits = 3)
+
+# =============================================================================
+# PREGUNTA 2
+# =============================================================================
+
+
+# =============================================================================
+# PREGUNTA 3
+# =============================================================================
+
+
+# =============================================================================
+# PREGUNTA 4
+# =============================================================================
+
+# ---- P4 a) Modelo DiD con heterogeneidad por sexo ---------------------------
+
+# Restringir la muestra a 2022 y 2023
+p4 <- datos[anio %in% c(2022, 2023)]
+
+# Indicador del período posterior al brote
+p4[, post := as.integer(anio == 2023)]
+
+# Modelo:
+# y_it = alpha_i + lambda_t + beta*(Norte x Post)
+#        + delta*(Post x Mujer) + gamma*(Norte x Post x Mujer) + e_it
+#
+# Efecto en hombres: beta
+# Efecto en mujeres: beta + gamma
+# Diferencia mujeres - hombres: gamma
+
+# ---- P4 b) Estimaciones para cada variable de resultado ---------------------
+
+variables_p4 <- c("asistencia", "puntaje_mat", "puntaje_leng")
+
+resultados_p4 <- rbindlist(lapply(variables_p4, function(v) {
+  
+  # Estimar modelo con efectos fijos de estudiante y año
+  reg <- feols(as.formula(paste(
+    v, "~ norte * post * mujer | id_estudiante + anio"
+  )), data = p4, cluster = ~id_colegio)
+  
+  # Extraer coeficientes y matriz de varianzas-covarianzas
+  b <- coef(reg)
+  V <- vcov(reg)
+  
+  # Identificar los coeficientes de interés
+  beta <- "norte:post"
+  gamma <- "norte:post:mujer"
+  
+  # Efecto estimado para hombres
+  efecto_hombres <- b[beta]
+  ee_hombres <- sqrt(V[beta, beta])
+  
+  # Efecto estimado para mujeres
+  efecto_mujeres <- b[beta] + b[gamma]
+  ee_mujeres <- sqrt(
+    V[beta, beta] + V[gamma, gamma] + 2 * V[beta, gamma]
+  )
+  
+  # Diferencia entre ambos efectos
+  diferencia <- b[gamma]
+  ee_diferencia <- sqrt(V[gamma, gamma])
+  
+  # Test de igualdad de efectos entre mujeres y hombres
+  ct <- coeftable(reg)
+  p_valor <- ct[gamma, "Pr(>|t|)"]
+  
+  data.table(
+    variable = v,
+    efecto_hombres = unname(efecto_hombres),
+    ee_hombres = unname(ee_hombres),
+    efecto_mujeres = unname(efecto_mujeres),
+    ee_mujeres = unname(ee_mujeres),
+    diferencia = unname(diferencia),
+    ee_diferencia = unname(ee_diferencia),
+    p_valor = unname(p_valor)
+  )
+}))
+
+# Presentar resultados
+print(resultados_p4, digits = 4)
+
+
+# =============================================================================
+# PREGUNTA 5
+# =============================================================================
+
+# ---- P5 a) Estimador de Wald y comparación con MCO --------------------------
+
+# Utilizar exclusivamente las observaciones del año 2023
+p5 <- datos[anio == 2023]
+
+# Definir ausentismo como porcentaje de días sin asistir a clases
+p5[, ausentismo := 100 - asistencia]
+
+# Estimar Wald y MCO para matemáticas y lenguaje
+variables_p5 <- c("puntaje_mat", "puntaje_leng")
+
+resultados_p5 <- rbindlist(lapply(variables_p5, function(v) {
+  
+  # Mantener observaciones con información completa
+  sub <- p5[!is.na(ausentismo) & !is.na(get(v))]
+  
+  # Medias de ausentismo por grupo
+  aus_norte <- sub[norte == 1, mean(ausentismo)]
+  aus_resto <- sub[norte == 0, mean(ausentismo)]
+  
+  # Medias del puntaje por grupo
+  punt_norte <- sub[norte == 1, mean(get(v))]
+  punt_resto <- sub[norte == 0, mean(get(v))]
+  
+  # Primer componente: primera etapa (diferencia en ausentismo)
+  primera_etapa <- aus_norte - aus_resto
+  
+  # Segundo componente: forma reducida (diferencia en puntajes)
+  forma_reducida <- punt_norte - punt_resto
+  
+  # Estimador de Wald
+  wald <- forma_reducida / primera_etapa
+  
+  # Estimación por MCO: puntaje sobre ausentismo
+  reg_mco <- feols(
+    as.formula(paste(v, "~ ausentismo")),
+    data = sub,
+    cluster = ~id_colegio
+  )
+  
+  data.table(
+    variable = v,
+    media_aus_norte = aus_norte,
+    media_aus_resto = aus_resto,
+    primera_etapa = primera_etapa,
+    media_punt_norte = punt_norte,
+    media_punt_resto = punt_resto,
+    forma_reducida = forma_reducida,
+    wald = wald,
+    mco = coef(reg_mco)["ausentismo"],
+    ee_mco = se(reg_mco)["ausentismo"],
+    observaciones = nrow(sub)
+  )
+}))
+
+# Presentar componentes y estimaciones
+print(resultados_p5, digits = 4)
+
+
+
+
+

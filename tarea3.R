@@ -216,9 +216,35 @@ print(tabla_p2[, .(resultado, grupo, delta, ee, media_norte_2022,
       digits = 3)
 
 # =============================================================================
-# PREGUNTA 3
+# PREGUNTA 3: Event study 2019-2025
 # =============================================================================
 
+# ---- P3 a) Evolución de los promedios por zona y año -------------------------
+medias_anio <- datos[, lapply(.SD, mean), by = .(zona, anio), .SDcols = resultados]
+
+# Pasar a formato "largo" para graficar las 3 variables en paneles
+medias_largo <- melt(medias_anio, id.vars = c("zona", "anio"),
+                     variable.name = "resultado", value.name = "media")
+medias_largo[, resultado := factor(resultado, levels = resultados,
+                                   labels = c("Asistencia (%)",
+                                              "Puntaje matemáticas (DE)",
+                                              "Puntaje lenguaje (DE)"))]
+
+fig_p3a <- ggplot(medias_largo, aes(x = anio, y = media, color = zona)) +
+  geom_vline(xintercept = 2022.5, linetype = "dashed", color = "grey50") +
+  geom_line(linewidth = 0.8) +
+  geom_point(size = 2) +
+  facet_wrap(~resultado, scales = "free_y", nrow = 1) +
+  scale_color_manual(values = colores) +
+  scale_x_continuous(breaks = 2019:2025) +
+  labs(x = "Año", y = "Promedio", color = "Zona") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+fig_p3a
+ggsave("figuras/p3a_evolucion.pdf", fig_p3a, width = 12, height = 4.5)
+
+# Tabla con los promedios (para citar números en el informe)
+print(dcast(medias_largo, resultado + zona ~ anio, value.var = "media"), digits = 3)
 
 # =============================================================================
 # PREGUNTA 4

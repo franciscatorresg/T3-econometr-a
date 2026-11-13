@@ -135,9 +135,85 @@ tabla_pend <- as.data.table(coeftable(pendientes))[coefficient == "asistencia"]
 print(tabla_pend[, .(sample, lhs, Estimate, `Std. Error`)], digits = 3)
 
 # =============================================================================
-# PREGUNTA 2
+# PREGUNTA 2: Diferencias en diferencias 2022-2023
 # =============================================================================
 
+# Solo 2022 (pre) y 2023 (brote)
+d2 <- datos[anio %in% c(2022, 2023)]
+d2[, post := as.integer(anio == 2023)]
+
+resultados <- c("asistencia", "puntaje_mat", "puntaje_leng")
+
+# ---- P2 b) Estimación: 3 resultados x 3 grupos de comparación ---------------
+# Modelo: y = a + b*norte + h*post + d*(norte x post) + e, EE agrupados por colegio
+# También se estima la versión con efectos fijos de estudiante y año (robustez)
+modelos  <- list()
+tabla_p2 <- list()
+
+for (y in resultados) {
+  for (g in names(grupos)) {
+    sub <- d2[zona %in% c("Norte", grupos[[g]])]
+    
+    m    <- feols(as.formula(paste(y, "~ norte * post")),
+                  data = sub, cluster = ~id_colegio)
+    m_ef <- feols(as.formula(paste(y, "~ norte:post | id_estudiante + anio")),
+                  data = sub, cluster = ~id_colegio)
+    
+    modelos[[paste(y, g)]] <- m
+    tabla_p2[[paste(y, g)]] <- data.table(
+      resultado = y, grupo = g,
+      delta    = coef(m)["norte:post"],
+      ee       = se(m)["norte:post"],
+      p_valor  = pvalue(m)["norte:post"],
+      delta_ef = coef(m_ef)[1],
+      ee_ef    = se(m_ef)[1],
+      n_obs    = nobs(m))
+  }
+}
+
+tabla_p2 <- rbindlist(tabla_p2)
+num <- c("delta", "ee", "p_valor", "delta_ef", "ee_ef")
+tabla_p2[, (num) := lapply(.SD, round, 4), .SDcols = num]
+print(tabla_p2)
+
+# Regresión completa (todos los coeficientes) para asistencia, las 3 comparaciones
+etable(modelos[c("asistencia Centro", "asistencia Sur", "asistencia Resto")])
+
+# ---- P2 b) DD a partir de las medias (tabla 2x2) ----------------------------
+medias_2x2 <- function(y, g) {
+  sub <- d2[zona %in% c("Norte", grupos[[g]])]
+  m <- sub[, .(media = mean(get(y))),
+           by = .(grupo = fifelse(norte == 1, "Norte", g), anio)]
+  t <- dcast(m, grupo ~ anio, value.var = "media")
+  setnames(t, c("2022", "2023"), c("y2022", "y2023"))
+  t[, cambio := y2023 - y2022]
+  dd <- t[grupo == "Norte", cambio] - t[grupo != "Norte", cambio]
+  print(t, digits = 4)
+  cat("DD calculado con medias =", round(dd, 4), "\n\n")
+}
+
+medias_2x2("asistencia", "Centro")
+medias_2x2("puntaje_mat", "Sur")
+
+
+# ---- P2 c) Magnitudes para interpretar --------------------------------------
+# Media del norte en 2022 (línea base) para cada resultado
+media_norte_2022 <- unlist(d2[zona == "Norte" & anio == 2022,
+                              lapply(.SD, mean), .SDcols = resultados])
+tabla_p2[, media_norte_2022 := media_norte_2022[resultado]]
+
+# Brecha previa (beta: coeficiente de 'norte') y efecto como múltiplo de esa brecha
+tabla_p2[, brecha_previa := sapply(modelos, function(m) coef(m)["norte"])]
+tabla_p2[, efecto_vs_brecha := delta / brecha_previa]
+
+# Asistencia: efecto en % de la línea base y en días (año escolar de 180 días)
+tabla_p2[resultado == "asistencia",
+         `:=`(efecto_pct    = 100 * delta / media_norte_2022,
+              dias_perdidos = -delta / 100 * 180)]
+
+print(tabla_p2[, .(resultado, grupo, delta, ee, media_norte_2022,
+                   brecha_previa, efecto_vs_brecha, efecto_pct, dias_perdidos)],
+      digits = 3)
 
 # =============================================================================
 # PREGUNTA 3

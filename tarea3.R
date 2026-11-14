@@ -246,6 +246,195 @@ ggsave("figuras/p3a_evolucion.pdf", fig_p3a, width = 12, height = 4.5)
 # Tabla con los promedios (para citar números en el informe)
 print(dcast(medias_largo, resultado + zona ~ anio, value.var = "media"), digits = 3)
 
+
+# ---- P3 c) Estimación: 3 resultados x 3 grupos ------------------------------
+
+modelos_p3 <- list()
+tabla_p3c  <- list()
+tests_pre  <- list()
+
+for (y in resultados) {
+  for (g in names(grupos)) {
+    
+    # Mantener norte y el grupo de comparación correspondiente
+    sub <- datos[zona %in% c("Norte", grupos[[g]])]
+    
+    # Event Study con efectos fijos de estudiante y año
+    m <- feols(
+      as.formula(paste0(
+        y, " ~ i(anio, norte, ref = 2022) | id_estudiante + anio"
+      )),
+      data = sub,
+      cluster = ~id_colegio
+    )
+    
+    modelos_p3[[paste(y, g)]] <- m
+    
+    # Extraer coeficientes de cada año e intervalos de confianza
+    b  <- coef(m)
+    ee <- se(m)
+    
+    terminos <- grep("^anio::", names(b), value = TRUE)
+    
+    tabla_coef <- data.table(
+      termino = terminos,
+      anio = as.integer(
+        sub("^anio::([0-9]+):norte$", "\\1", terminos)
+      ),
+      resultado = y,
+      grupo = g,
+      estimacion = as.numeric(b[terminos]),
+      ee = as.numeric(ee[terminos])
+    )
+    
+    # Intervalos de confianza al 95%
+    tabla_coef[, `:=`(
+      ic_inf = estimacion - 1.96 * ee,
+      ic_sup = estimacion + 1.96 * ee
+    )]
+    
+    tabla_p3c[[paste(y, g)]] <- tabla_coef
+    
+    # ---- Contraste conjunto de tendencias previas -------------------------
+    # H0: los coeficientes de 2019, 2020 y 2021 son conjuntamente cero.
+    # Se utiliza la matriz de varianzas agrupada por colegio.
+    
+    pre_terminos <- grep(
+      "^anio::(2019|2020|2021):norte$",
+      names(b),
+      value = TRUE
+    )
+    
+    if (length(pre_terminos) == 3) {
+      
+      b_pre <- b[pre_terminos]
+      V_pre <- vcov(m)[pre_terminos, pre_terminos, drop = FALSE]
+      
+      # Estadístico de Wald
+      wald_pre <- as.numeric(
+        crossprod(b_pre, solve(V_pre, b_pre))
+      )
+      
+      p_pre <- pchisq(
+        wald_pre,
+        df = length(pre_terminos),
+        lower.tail = FALSE
+      )
+      
+    } else {
+      wald_pre <- NA_real_
+      p_pre <- NA_real_
+    }
+    
+    tests_pre[[paste(y, g)]] <- data.table(
+      resultado = y,
+      grupo = g,
+      estadistico_wald = wald_pre,
+      grados_libertad = length(pre_terminos),
+      p_valor = p_pre
+    )
+  }
+}
+
+# Unir resultados de los nueve modelos
+tabla_p3c <- rbindlist(tabla_p3c)
+tabla_tests_pre <- rbindlist(tests_pre)
+
+# Ordenar resultados
+setorder(tabla_p3c, resultado, grupo, anio)
+
+# Presentar coeficientes e intervalos de confianza
+print(
+  tabla_p3c[, .(
+    resultado, grupo, anio,
+    estimacion, ee, ic_inf, ic_sup
+  )],
+  digits = 4
+)
+
+# Presentar contrastes conjuntos de tendencias previas
+cat("\nCONTRASTES CONJUNTOS DE TENDENCIAS PREVIAS\n")
+print(tabla_tests_pre, digits = 4)
+
+
+# ---- P3 c) Gráfico de coeficientes del Event Study -------------------------
+
+# Etiquetas para las variables de resultado
+tabla_p3c[, resultado := factor(
+  resultado,
+  levels = resultados,
+  labels = c(
+    "Asistencia (%)",
+    "Puntaje matemáticas (DE)",
+    "Puntaje lenguaje (DE)"
+  )
+)]
+
+# Orden de los grupos de comparación
+tabla_p3c[, grupo := factor(
+  grupo,
+  levels = c("Centro", "Sur", "Resto"),
+  labels = c("Norte vs. Centro", "Norte vs. Sur", "Norte vs. Resto")
+)]
+
+fig_p3c <- ggplot(
+  tabla_p3c,
+  aes(x = anio, y = estimacion)
+) +
+  geom_hline(
+    yintercept = 0,
+    linetype = "dashed",
+    color = "grey50"
+  ) +
+  geom_vline(
+    xintercept = 2022,
+    linetype = "dotted",
+    color = "grey40"
+  ) +
+  geom_errorbar(
+    aes(ymin = ic_inf, ymax = ic_sup),
+    width = 0.15
+  ) +
+  geom_point(size = 2) +
+  facet_grid(resultado ~ grupo, scales = "free_y") +
+  scale_x_continuous(breaks = 2019:2025) +
+  labs(
+    title = "Evolución del efecto del brote: Estudio de eventos",
+    subtitle = "Diferencial Norte vs. grupo de comparación, relativo a 2022",
+    x = "Año",
+    y = "Coeficiente estimado",
+    caption = "Intervalos de confianza al 95%. Errores estándar agrupados por colegio."
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    strip.text = element_text(face = "bold")
+  )
+
+fig_p3c
+
+ggsave(
+  "figuras/p3c_event_study.pdf",
+  fig_p3c,
+  width = 13,
+  height = 9
+)
+
+
+# ---- P3 d) Evolución de puntajes en zonas de control -----------------------
+# Revisar qué ocurre en 2023 con los puntajes de matemáticas
+# y lenguaje en las zonas centro y sur.
+
+control_p3d <- medias_anio[
+  zona %in% c("Centro", "Sur") & anio %in% c(2022, 2023),
+  .(zona, anio, puntaje_mat, puntaje_leng)
+]
+
+setorder(control_p3d, zona, anio)
+
+cat("\nEVOLUCIÓN DE PUNTAJES EN CENTRO Y SUR: 2022-2023\n")
+print(control_p3d, digits = 4)
+
+
 # =============================================================================
 # PREGUNTA 4
 # =============================================================================
